@@ -3,7 +3,7 @@ import re
 from collections.abc import Callable
 
 import requests
-
+# noqa: E402
 from accuracy import _is_blank, match_rows
 from config import JUDGE_CONTEXT_TOKENS, JUDGE_HOST, JUDGE_MODEL, JUDGE_TIMEOUT_SECONDS
 
