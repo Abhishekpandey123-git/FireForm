@@ -38,6 +38,11 @@ DB_ECHO = os.getenv("FIREFORM_DB_ECHO", "true").lower() == "true"
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "300"))
+# LLM_PROVIDER selects the inference adapter. Ollama remains the default.
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
+LLAMA_CPP_HOST = os.getenv("LLAMA_CPP_HOST", "http://localhost:8080").rstrip("/")
+LLAMA_CPP_MODEL = os.getenv("LLAMA_CPP_MODEL", "local-model")
+LLAMA_CPP_TIMEOUT = int(os.getenv("LLAMA_CPP_TIMEOUT", "300"))
 WHISPER_HOST = os.getenv("WHISPER_HOST", "http://localhost:9000").rstrip("/")
 
 # --- Celery / Redis -------------------------------------------------------

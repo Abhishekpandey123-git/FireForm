@@ -10,7 +10,8 @@ from app.api.schemas.forms import (
     TranscriptionResponse,
 )
 from app.core import paths
-from app.core.config import OLLAMA_HOST, OLLAMA_MODEL, RETENTION_PERIOD_DAYS
+from app.core.config import LLAMA_CPP_HOST, LLM_PROVIDER, OLLAMA_HOST, RETENTION_PERIOD_DAYS
+from app.services.llm import default_model, normalize_provider
 from app.services.whisper import call_whisper_asr
 from app.core.errors.base import AppError
 from app.db.repositories import get_template, get_form_submission, delete_form_submission
@@ -49,24 +50,35 @@ def fill_form(form: FormFill, db: Session = Depends(get_db)):
 
 @router.get("/models", response_model=ModelsResponse)
 def list_models():
-    """List the Whisper-independent extraction models available in the local
-    Ollama instance, plus the configured default. Used by the Fill Form UI's
-    model picker. Falls back to just the default if Ollama is unreachable."""
-    default_model = OLLAMA_MODEL
-
+    """List models exposed by the selected inference provider and its default."""
+    provider = normalize_provider(LLM_PROVIDER)
+    configured_default = default_model(provider)
     models: list[str] = []
     try:
-        response = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=10)
-        response.raise_for_status()
-        models = [m["name"] for m in response.json().get("models", []) if m.get("name")]
+        if provider == "ollama":
+            response = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=10)
+            response.raise_for_status()
+            models = [
+                model["name"]
+                for model in response.json().get("models", [])
+                if model.get("name")
+            ]
+        else:
+            response = requests.get(f"{LLAMA_CPP_HOST}/v1/models", timeout=10)
+            response.raise_for_status()
+            models = [
+                model["id"]
+                for model in response.json().get("data", [])
+                if model.get("id")
+            ]
     except requests.exceptions.RequestException:
+        # Keep the form usable when the model server is temporarily unavailable.
         models = []
 
-    # Always surface the configured default, even if Ollama hasn't pulled it yet.
-    if default_model not in models:
-        models.insert(0, default_model)
+    if configured_default not in models:
+        models.insert(0, configured_default)
 
-    return ModelsResponse(models=models, default=default_model)
+    return ModelsResponse(models=models, default=configured_default)
 
 
 @router.post("/transcribe", response_model=TranscriptionResponse)
