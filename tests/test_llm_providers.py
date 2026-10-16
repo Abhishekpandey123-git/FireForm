@@ -82,8 +82,8 @@ def test_llama_cpp_payload_and_response_parsing():
     payload = kwargs["json"]
     assert payload["model"] == "local-model"
     assert payload["messages"] == [{"role": "user", "content": PROMPT}]
-    assert payload["response_format"]["type"] == "json_schema"
-    assert payload["response_format"]["schema"] == SCHEMA
+    assert payload["json_schema"] == SCHEMA
+    assert "response_format" not in payload
     assert kwargs["timeout"] == llama_cpp.LLAMA_CPP_TIMEOUT
 
 
