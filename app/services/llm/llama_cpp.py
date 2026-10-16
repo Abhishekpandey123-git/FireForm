@@ -22,7 +22,7 @@ def generate(prompt: str, schema: dict, model: str) -> str:
         "repeat_penalty": OPTIONS["repeat_penalty"],
         # Match llama.cpp's documented response_format schema shape and the
         # benchmark adapter so both paths exercise equivalent constraints.
-        "response_format": {"type": "json_schema", "schema": schema},
+        "json_schema": schema,
     }
     response = requests.post(
         f"{LLAMA_CPP_HOST}/v1/chat/completions",
