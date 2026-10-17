@@ -36,7 +36,16 @@ sys.path.insert(0, os.path.dirname(HERE))   # so `app` imports from the repo roo
 
 import config  # noqa: E402,F401  loads benchmark/.env; must come before the `app` imports
 
-from app.core.config import OLLAMA_HOST, OLLAMA_MODEL  # noqa: E402
+from app.core.config import (  # noqa: E402
+    LLM_PROVIDER,
+    LLAMA_CPP_HOST,
+    LLAMA_CPP_MODEL,
+    LLAMA_CPP_TIMEOUT,
+    OLLAMA_HOST,
+    OLLAMA_MODEL,
+    OLLAMA_TIMEOUT,
+)
+from app.services.llm.factory import normalize_provider  # noqa: E402
 from app.services.form_filler import filler  # noqa: E402
 import compare  # noqa: E402
 import report  # noqa: E402
@@ -102,21 +111,43 @@ def run_doc(doc, run_dir, model):
 
 
 def main():
+    provider = normalize_provider(LLM_PROVIDER)
+    if provider == "llama_cpp":
+        default_model = LLAMA_CPP_MODEL
+        provider_host = LLAMA_CPP_HOST
+        provider_timeout = LLAMA_CPP_TIMEOUT
+    else:
+        default_model = OLLAMA_MODEL
+        provider_host = OLLAMA_HOST
+        provider_timeout = OLLAMA_TIMEOUT
+
     parser = argparse.ArgumentParser()
-    parser.add_argument("-m", "--model", default=OLLAMA_MODEL, help="Ollama model")
+    parser.add_argument(
+        "-m", "--model",
+        default=default_model,
+        help="Model name for the selected LLM provider",
+    )
     parser.add_argument("-d", "--docs", nargs="*", help="documents to run (default: all)")
-    parser.add_argument("--baseline", action="store_true",
-                        help="publish this run to baselines/<model>/ (full runs only)")
+    parser.add_argument(
+        "--baseline",
+        action="store_true",
+        help="publish this run to baselines/<model>/ (full runs only)",
+    )
     args = parser.parse_args()
     if args.baseline and args.docs:
         parser.error("--baseline publishes the full benchmark; drop -d")
     docs = args.docs or all_docs()
 
     stamp = time.strftime("%Y-%m-%d_%H%M%S")
-    run_dir = os.path.join(RESULTS_DIR, f"{stamp}_{safe_name(args.model)}")
+    run_name = f"{stamp}_{safe_name(provider)}_{safe_name(args.model)}"
+    run_dir = os.path.join(RESULTS_DIR, run_name)
     os.makedirs(run_dir, exist_ok=True)
     sys.stdout = Tee(os.path.join(run_dir, "run.log"))
-    print(f"Model: {args.model} @ {OLLAMA_HOST}   Documents: {len(docs)}   Output: {run_dir}")
+    print(
+        f"Provider: {provider} | Model: {args.model} @ {provider_host} "
+        f"| Timeout: {provider_timeout}s | Documents: {len(docs)} "
+        f"| Output: {run_dir}"
+    )
 
     info = run_info.collect(args.model, docs, sys.argv[1:])
     save_text(run_dir, "prompt.txt", filler.PROMPT)
