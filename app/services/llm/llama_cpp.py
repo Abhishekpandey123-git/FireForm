@@ -36,6 +36,13 @@ def generate(prompt: str, schema: dict, model: str) -> str:
         json=payload,
         timeout=LLAMA_CPP_TIMEOUT,
     )
+    if not response.ok:
+        raise requests.HTTPError(
+            f"llama.cpp returned HTTP {response.status_code}: "
+            f"{response.text[:3000]}",
+            response=response,
+        )
+
     response.raise_for_status()
     body = response.json()
 
