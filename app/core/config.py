@@ -70,6 +70,7 @@ LLM_PROVIDER_ENV = {
     "gemini": _provider_env("GEMINI"),
     "anthropic": _provider_env("ANTHROPIC"),
     "custom": _provider_env("CUSTOM"),
+    "llama_cpp": _provider_env("LLAMA_CPP"),
 }
 
 WHISPER_HOST = os.getenv("WHISPER_HOST", "http://localhost:9000").rstrip("/")

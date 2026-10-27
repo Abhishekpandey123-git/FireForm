@@ -87,6 +87,10 @@ SPECS: dict[LLMProvider, ProviderSpec] = {
         headers=(("anthropic-version", "2023-06-01"),),
     ),
     LLMProvider.custom: ProviderSpec(LLMProvider.custom, needs_key=False),
+    # llama.cpp serves the same OpenAI-compatible API with a local default.
+    LLMProvider.llama_cpp: ProviderSpec(
+        LLMProvider.llama_cpp, "http://localhost:8080/v1", needs_key=False
+    ),
 }
 
 DEFAULT_OLLAMA_INSTALLABLE_MODELS: tuple[str, ...] = (

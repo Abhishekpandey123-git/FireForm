@@ -62,9 +62,9 @@ def get_provider_configs(db: Session = Depends(get_db)):
         ui_key = bool(
             record and record.api_key_encrypted and has_decryptable_credential(provider.value)
         )
-        ui_custom_url = bool(provider is LLMProvider.custom and record and record.base_url)
-        source = "ui" if ui_key or ui_custom_url else "env" if env_key or env.get("BASE_URL") else "none"
-        base_url = (record.base_url if ui_custom_url else None) or env.get("BASE_URL") or spec.default_base_url
+        ui_compatible_url = bool(provider in {LLMProvider.custom, LLMProvider.llama_cpp} and record and record.base_url)
+        source = "ui" if ui_key or ui_compatible_url else "env" if env_key or env.get("BASE_URL") else "none"
+        base_url = (record.base_url if ui_compatible_url else None) or env.get("BASE_URL") or spec.default_base_url
         key_hint = record.key_hint if ui_key else env_key[-4:] if env_key else None
         statuses.append(
             LLMProviderCredentialStatus(
@@ -77,10 +77,10 @@ def get_provider_configs(db: Session = Depends(get_db)):
                 credential_status=(
                     "available" if has_decryptable_credential(provider.value) else "unavailable"
                 ) if record and record.api_key_encrypted else None,
-                base_url=_display_base_url(base_url) if provider is LLMProvider.custom else None,
+                base_url=_display_base_url(base_url) if provider in {LLMProvider.custom, LLMProvider.llama_cpp} else None,
                 structured_output=(
                     record.structured_output
-                    if provider is LLMProvider.custom and record and record.structured_output is not None
+                    if provider in {LLMProvider.custom, LLMProvider.llama_cpp} and record and record.structured_output is not None
                     else None
                 ),
             )
@@ -100,17 +100,17 @@ def save_provider_config(
     ).first()
     env = config.LLM_PROVIDER_ENV[provider.value]
 
-    if provider is not LLMProvider.custom and body.structured_output is not None:
-        raise LLMNotAvailableError("Only the custom provider accepts a structured_output override.")
-    if provider is not LLMProvider.custom and body.base_url is not None:
-        raise LLMNotAvailableError("Only the custom provider accepts a configurable base URL.")
+    if provider not in {LLMProvider.custom, LLMProvider.llama_cpp} and body.structured_output is not None:
+        raise LLMNotAvailableError("Only OpenAI-compatible custom providers accept a structured_output override.")
+    if provider not in {LLMProvider.custom, LLMProvider.llama_cpp} and body.base_url is not None:
+        raise LLMNotAvailableError("Only OpenAI-compatible custom providers accept a configurable base URL.")
 
-    base_url = body.base_url if provider is LLMProvider.custom and body.base_url is not None else None
-    if provider is LLMProvider.custom:
-        base_url = base_url or (record.base_url if record else None) or env.get("BASE_URL") or None
+    base_url = body.base_url if provider in {LLMProvider.custom, LLMProvider.llama_cpp} and body.base_url is not None else None
+    if provider in {LLMProvider.custom, LLMProvider.llama_cpp}:
+        base_url = base_url or (record.base_url if record else None) or env.get("BASE_URL") or SPECS[provider].default_base_url or None
         if not base_url:
-            raise LLMNotAvailableError("CUSTOM_BASE_URL is required.")
-        base_url = _validate_custom_url(base_url)
+            raise LLMNotAvailableError(f"{SPECS[provider].setting('BASE_URL')} is required.")
+        base_url = _validate_provider_url(base_url, provider)
 
     api_key_was_provided = "api_key" in body.model_fields_set and body.api_key is not None
     api_key = _provided_secret(body.api_key) if api_key_was_provided else None
@@ -129,7 +129,7 @@ def save_provider_config(
         secret = _provided_secret(body.api_key)
         record.api_key_encrypted = encrypt_api_key(secret) if secret else None
         record.key_hint = secret[-4:] if secret else None
-    if provider is LLMProvider.custom:
+    if provider in {LLMProvider.custom, LLMProvider.llama_cpp}:
         record.base_url = base_url
         if body.structured_output is not None:
             record.structured_output = body.structured_output
@@ -186,11 +186,11 @@ def validate_provider_config(
     db: Session = Depends(get_db),
 ):
     validate_provider(provider)
-    if provider is not LLMProvider.custom and body.structured_output is not None:
+    if provider not in {LLMProvider.custom, LLMProvider.llama_cpp} and body.structured_output is not None:
         return LLMProviderValidationResult(
             provider=provider,
             ok=False,
-            detail="Only the custom provider accepts a structured_output override.",
+            detail="Only OpenAI-compatible custom providers accept a structured_output override.",
             error_code="LLM_CONFIG_ERROR",
         )
     api_key = _provided_secret(body.api_key)
@@ -202,16 +202,18 @@ def validate_provider_config(
             error_code="LLM_AUTH_FAILED",
         )
     base_url = body.base_url
-    if provider is LLMProvider.custom:
+    if provider in {LLMProvider.custom, LLMProvider.llama_cpp}:
+        if not base_url:
+            base_url = config.LLM_PROVIDER_ENV[provider.value].get("BASE_URL") or SPECS[provider].default_base_url or None
         if not base_url:
             return LLMProviderValidationResult(
                 provider=provider,
                 ok=False,
-                detail="CUSTOM_BASE_URL is required.",
+                detail=f"{SPECS[provider].setting('BASE_URL')} is required.",
                 error_code="LLM_CONFIG_ERROR",
             )
         try:
-            base_url = _validate_custom_url(base_url)
+            base_url = _validate_provider_url(base_url, provider)
         except LLMError as exc:
             return LLMProviderValidationResult(provider=provider, ok=False, detail=exc.message,
                                                error_code=exc.error_code)
@@ -219,7 +221,7 @@ def validate_provider_config(
         return LLMProviderValidationResult(
             provider=provider,
             ok=False,
-            detail="Only the custom provider accepts a configurable base URL.",
+            detail="Only OpenAI-compatible custom providers accept a configurable base URL.",
             error_code="LLM_CONFIG_ERROR",
         )
 
@@ -242,7 +244,7 @@ def validate_provider_config(
         )
     except LLMError as exc:
         detail = _redact(exc.message, api_key)
-        if provider is LLMProvider.custom and "has no model list" in detail:
+        if provider in {LLMProvider.custom, LLMProvider.llama_cpp} and "has no model list" in detail:
             detail = "This server does not expose a model list. Validate a model ID manually."
         return LLMProviderValidationResult(
             provider=provider, ok=False, detail=detail, error_code=exc.error_code
@@ -262,7 +264,7 @@ def validate_and_add_manual_model(
         ).first()
         env = config.LLM_PROVIDER_ENV[provider.value]
         base_url = (
-            existing_config.base_url if provider is LLMProvider.custom and existing_config else None
+            existing_config.base_url if provider in {LLMProvider.custom, LLMProvider.llama_cpp} and existing_config else None
         ) or env.get("BASE_URL") or SPECS[provider].default_base_url
         _require_external_consent(db, provider, base_url)
         candidate = registry_for_candidate(
@@ -317,22 +319,23 @@ def _provided_secret(value: SecretStr | None) -> str:
     return value.get_secret_value().strip() if value else ""
 
 
-def _validate_custom_url(value: str) -> str:
+def _validate_provider_url(value: str, provider: LLMProvider) -> str:
+    setting = SPECS[provider].setting("BASE_URL")
     try:
         parsed = urlparse(value)
     except ValueError:
-        raise LLMNotAvailableError("CUSTOM_BASE_URL must be an HTTP or HTTPS URL with a hostname.") from None
+        raise LLMNotAvailableError(f"{setting} must be an HTTP or HTTPS URL with a hostname.") from None
     if parsed.username is not None or parsed.password is not None:
-        raise LLMNotAvailableError("CUSTOM_BASE_URL must not include embedded credentials.")
+        raise LLMNotAvailableError(f"{setting} must not include embedded credentials.")
     if parsed.query or parsed.fragment:
-        raise LLMNotAvailableError("CUSTOM_BASE_URL must not include query parameters or a fragment.")
+        raise LLMNotAvailableError(f"{setting} must not include query parameters or a fragment.")
     from app.services.llm.settings import _check_url
     from app.services.llm.errors import LLMConfigError
 
     try:
-        return _check_url("CUSTOM_BASE_URL", value)
+        return _check_url(setting, value)
     except LLMConfigError:
-        raise LLMNotAvailableError("CUSTOM_BASE_URL must be an HTTP or HTTPS URL with a hostname.") from None
+        raise LLMNotAvailableError(f"{setting} must be an HTTP or HTTPS URL with a hostname.") from None
 
 
 def _display_base_url(value: str) -> str:

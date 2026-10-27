@@ -88,11 +88,12 @@ LLMProvider:
   type: string
   enum:
     - ollama
+    - llama_cpp
     - openai
     - gemini
     - anthropic
     - custom
-  description: An LLM provider that can fill forms. custom is any OpenAI compatible server
+  description: An LLM provider that can fill forms. llama_cpp uses the llama.cpp OpenAI-compatible server; custom is any other OpenAI-compatible server
 
 # OutputFormat:
 #   type: string

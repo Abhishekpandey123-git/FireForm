@@ -15,7 +15,8 @@ from importlib import metadata
 import requests
 
 import llm_judge
-from app.core.config import OLLAMA_HOST, OLLAMA_TIMEOUT
+from app.core.config import OLLAMA_HOST
+from app.services import llm
 from app.services.form_filler import filler
 from app.services.llm.ollama import OPTIONS
 
@@ -23,17 +24,31 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PACKAGES = ["pypdf", "pdfplumber", "requests"]
 
 
-def collect(model, docs, argv):
+def collect(provider, model, docs, argv):
     """Settings known before the run starts."""
+    is_ollama = provider == "ollama"
+    provider_settings = llm.get_registry().settings.providers[llm.LLMProvider(provider)]
+    model_artifact = ollama_model_info(OLLAMA_HOST, model) if is_ollama else {
+        "digest": None,
+        "details": None,
+        "note": "For a local llama.cpp run, record the GGUF SHA-256 and llama.cpp build in the report.",
+    }
     return {
         "date": time.strftime("%Y-%m-%d %H:%M:%S %z"),
         "command": "python3 run.py " + " ".join(argv),
         "code": git_state(),
         "model_under_test": {
+            "provider": provider,
             "model": model,
-            **ollama_model_info(OLLAMA_HOST, model),
-            "options": OPTIONS,
-            "timeout_seconds": OLLAMA_TIMEOUT,
+            **model_artifact,
+            "options": OPTIONS if is_ollama else {
+                "transport": "OpenAI-compatible API",
+                "temperature": provider_settings.temperature,
+                "structured_output": provider_settings.structured_output,
+                "max_tokens": provider_settings.max_tokens,
+                "settings": "record server flags in the benchmark report",
+            },
+            "timeout_seconds": provider_settings.timeout,
             "prompt_file": "prompt.txt",
             "prompt_sha256": sha256(filler.PROMPT),
         },
@@ -44,7 +59,7 @@ def collect(model, docs, argv):
             "timeout_seconds": llm_judge.JUDGE_TIMEOUT_SECONDS,
             "threshold": llm_judge.JUDGE_THRESHOLD,
         },
-        "ollama_version": ollama_version(OLLAMA_HOST),
+        "ollama_version": ollama_version(OLLAMA_HOST) if is_ollama else None,
         "environment": {
             "python": platform.python_version(),
             "platform": platform.platform(),
@@ -66,6 +81,8 @@ def add_results(info, scored, skipped, seconds):
         ),
         "average_raw_accuracy": round(sum(r["raw_accuracy"] for _, r, _ in scored) / n * 100, 2) if n else None,
         "total_seconds": round(seconds),
+        "scored_documents_per_minute": round(n * 60 / seconds, 3) if seconds > 0 else None,
+        "attempted_documents_per_minute": round((n + len(skipped)) * 60 / seconds, 3) if seconds > 0 else None,
     }
     return info
 

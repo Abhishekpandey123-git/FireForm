@@ -33,6 +33,7 @@ from app.services.llm.selection import ModelSelection
 from app.services.llm.specs import DEFAULT_OLLAMA_INSTALLABLE_MODELS, SPECS
 
 OLLAMA, GEMINI, OPENAI = LLMProvider.ollama, LLMProvider.gemini, LLMProvider.openai
+LLAMA_CPP = LLMProvider.llama_cpp
 
 
 class FakeLLM(LLM):
@@ -162,6 +163,17 @@ class TestResolve:
         assert registry.resolve() == ModelChoice(OLLAMA, "qwen")
         assert registry.resolve(OLLAMA, "qwen") == ModelChoice(OLLAMA, "qwen")
         assert ollama.list_calls == 0
+
+    def test_llama_cpp_provider_can_be_selected_and_listed(self, ollama):
+        model_name = "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"
+        llama_cpp = FakeLLM(LLAMA_CPP, [model_name])
+        settings = {
+            OLLAMA: _provider(OLLAMA, "*", "qwen"),
+            LLAMA_CPP: _provider(LLAMA_CPP, model_name, model_name),
+        }
+        registry = _registry({OLLAMA: ollama, LLAMA_CPP: llama_cpp}, settings=settings)
+        assert registry.resolve(LLAMA_CPP, model_name) == ModelChoice(LLAMA_CPP, model_name)
+        assert [m.name for m in registry.provider_catalog(LLAMA_CPP).models] == [model_name]
 
     def test_provider_alone_gets_its_default_model(self, registry):
         assert registry.resolve("gemini") == ModelChoice(GEMINI, "g1")

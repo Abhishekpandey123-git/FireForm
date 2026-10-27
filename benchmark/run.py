@@ -2,10 +2,11 @@
 
     python3 run.py                          # every narrative in data/narratives
     python3 run.py -d ics_203_1 ics_206_1   # a subset
-    python3 run.py -m qwen3.5:4b            # another Ollama model
+    python3 run.py --provider custom -m <model-id>  # an OpenAI-compatible server
     python3 run.py --baseline               # full run, then publish it to baselines/<model>/
 
-Servers and models come from benchmark/.env (see .env.example and config.py).
+Provider settings and models come from benchmark/.env (see .env.example and config.py).
+Use --provider to choose a provider without changing the global default.
 
 Each run gets its own folder, results/<date>_<time>_<model>/:
 
@@ -36,8 +37,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config  # noqa: F401  imported for its side effect: loads benchmark/.env before `app`
 
-from app.core.config import OLLAMA_HOST, OLLAMA_MODEL
+from app.core.config import LLM_PROVIDER
+from app.services import llm
 from app.services.form_filler import filler
+from app.services.llm.errors import LLMError
 import compare
 import report
 import review_pdf
@@ -60,7 +63,7 @@ def all_docs():
     return sorted(names, key=lambda d: (d.rsplit("_", 1)[0], int(d.rsplit("_", 1)[1])))
 
 
-def run_doc(doc, run_dir, model):
+def run_doc(doc, run_dir, model, provider, timings):
     """Fill one document, save every step, score it. Returns (result, entries)."""
     form = doc.rsplit("_", 1)[0]
     pdf_path = os.path.join(PDF_DIR, form + ".pdf")
@@ -73,7 +76,14 @@ def run_doc(doc, run_dir, model):
         narrative = f.read()
 
     # 1. Fill
-    out = filler.fill(pdf_path, narrative, os.path.join(doc_dir, "filled.pdf"), model)
+    fill_start = time.perf_counter()
+    try:
+        out = filler.fill(
+            pdf_path, narrative, os.path.join(doc_dir, "filled.pdf"), model, provider=provider
+        )
+    finally:
+        # Includes schema construction, provider inference, and PDF writing.
+        timings.setdefault(doc, {})["fill_wall_seconds"] = round(time.perf_counter() - fill_start, 3)
     save_text(doc_dir, "prompt.txt", out["prompt"])
     save_json(doc_dir, "schema.json", out["schema"])
     save_text(doc_dir, "response.json", out["response_text"])
@@ -104,7 +114,16 @@ def run_doc(doc, run_dir, model):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-m", "--model", default=OLLAMA_MODEL, help="Ollama model")
+    parser.add_argument(
+        "-p", "--provider",
+        choices=("ollama", "openai", "gemini", "anthropic", "custom", "llama_cpp"),
+        default=LLM_PROVIDER,
+        help="LLM provider (default: configured LLM_PROVIDER)",
+    )
+    parser.add_argument(
+        "-m", "--model", default=None,
+        help="provider model ID (default: the provider's configured default model)",
+    )
     parser.add_argument("-d", "--docs", nargs="*", help="documents to run (default: all)")
     parser.add_argument("--baseline", action="store_true",
                         help="publish this run to baselines/<model>/ (full runs only)")
@@ -113,23 +132,33 @@ def main():
         parser.error("--baseline publishes the full benchmark; drop -d")
     docs = args.docs or all_docs()
 
+    # Resolve the exact provider/model pair once, so metadata and outputs describe
+    # the target actually used and a misconfigured provider fails before the run.
+    try:
+        choice = llm.get_registry().resolve(args.provider, args.model)
+    except LLMError as exc:
+        parser.error(exc.message)
+    provider, model = choice.provider.value, choice.model
+
     stamp = time.strftime("%Y-%m-%d_%H%M%S")
-    run_dir = os.path.join(RESULTS_DIR, f"{stamp}_{safe_name(args.model)}")
+    run_dir = os.path.join(RESULTS_DIR, f"{stamp}_{provider}_{safe_name(model)}")
     os.makedirs(run_dir, exist_ok=True)
     sys.stdout = Tee(os.path.join(run_dir, "run.log"))
-    print(f"Model: {args.model} @ {OLLAMA_HOST}   Documents: {len(docs)}   Output: {run_dir}")
+    # Do not print provider URLs; they may contain internal hostnames.
+    print(f"Provider: {provider}   Model: {model}   Documents: {len(docs)}   Output: {run_dir}")
 
-    info = run_info.collect(args.model, docs, sys.argv[1:])
+    info = run_info.collect(provider, model, docs, sys.argv[1:])
     save_text(run_dir, "prompt.txt", filler.PROMPT)
 
     scored = []    # (doc, result, entries)
     skipped = []   # (doc, reason)
+    timings = {}   # elapsed wall seconds for every document, including failures
     start = time.perf_counter()
     for doc in docs:
         print(f" --- {doc} --- ")
         doc_start = time.perf_counter()
         try:
-            result, entries = run_doc(doc, run_dir, args.model)
+            result, entries = run_doc(doc, run_dir, model, provider, timings)
         except requests.exceptions.Timeout:
             skipped.append((doc, "model call timed out"))
             print(f"SKIPPED {doc}: model call timed out")
@@ -139,28 +168,36 @@ def main():
             skipped.append((doc, f"model call failed: {e}"))
             print(f"SKIPPED {doc}: model call failed: {e}")
             continue
+        except LLMError as e:
+            # Provider adapters normalize provider failures into LLMError.
+            skipped.append((doc, f"model call failed: {e.message}"))
+            print(f"SKIPPED {doc}: model call failed: {e.message}")
+            continue
         except json.JSONDecodeError:
             # num_predict cut off a runaway generation mid-JSON
             skipped.append((doc, "output cut off (runaway generation)"))
             print(f"SKIPPED {doc}: model output was not complete JSON")
             continue
+        finally:
+            timings.setdefault(doc, {})["document_wall_seconds"] = round(time.perf_counter() - doc_start, 3)
         scored.append((doc, result, entries))
-        print(f"{time.perf_counter() - doc_start:.1f}s")
+        print(f'{timings[doc]["document_wall_seconds"]:.3f}s')
 
     seconds = time.perf_counter() - start
-    write_summary(os.path.join(run_dir, "summary.csv"), args.model, scored, skipped)
-    report.write(os.path.join(run_dir, "wrong_fields.txt"), args.model, scored, skipped)
+    write_summary(os.path.join(run_dir, "summary.csv"), provider, model, scored, skipped, timings)
+    report.write(os.path.join(run_dir, "wrong_fields.txt"), f"{provider}/{model}", scored, skipped)
     save_json(run_dir, "run_info.json", run_info.add_results(info, scored, skipped, seconds))
     print_averages(scored, skipped)
     print(f"Total time: {seconds:.0f}s   Results: {run_dir}")
 
     if args.baseline:
-        publish_baseline(run_dir, args.model)
+        publish_baseline(run_dir, provider, model)
 
 
-def publish_baseline(run_dir, model):
-    """Overwrite baselines/<model>/ with this run's text results; git shows what changed."""
-    baseline_dir = os.path.join(BASELINES_DIR, safe_name(model))
+def publish_baseline(run_dir, provider, model):
+    """Publish compact results without overwriting another provider's baseline."""
+    key = safe_name(model) if provider == "ollama" else f"{provider}--{safe_name(model)}"
+    baseline_dir = os.path.join(BASELINES_DIR, key)
     os.makedirs(baseline_dir, exist_ok=True)
     for name in BASELINE_FILES:
         shutil.copy(os.path.join(run_dir, name), os.path.join(baseline_dir, name))
@@ -171,24 +208,31 @@ def safe_name(model):
     return model.replace(":", "-").replace("/", "_")
 
 
-def write_summary(path, model, scored, skipped):
+def write_summary(path, provider, model, scored, skipped, timings):
     with open(path, "w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([
-            "document", "model", "status",
+            "document", "provider", "model", "status", "fill_wall_seconds", "document_wall_seconds",
             "total_accuracy_percent", "populated_accuracy_percent",
             "total_raw_accuracy_percent", "populated_raw_accuracy_percent",
             "missing_count", "unsupported_count",
         ])
         for doc, r, _ in scored:
             writer.writerow([
-                doc, model, "ok",
+                doc, provider, model, "ok",
+                timings.get(doc, {}).get("fill_wall_seconds"),
+                timings.get(doc, {}).get("document_wall_seconds"),
                 round(r["accuracy"] * 100, 2), round(r["populated_accuracy"] * 100, 2),
                 round(r["raw_accuracy"] * 100, 2), round(r["populated_raw_accuracy"] * 100, 2),
                 r["missing_count"], r["unsupported_count"],
             ])
         for doc, reason in skipped:
-            writer.writerow([doc, model, f"skipped: {reason}", "", "", "", "", "", ""])
+            writer.writerow([
+                doc, provider, model, f"skipped: {reason}",
+                timings.get(doc, {}).get("fill_wall_seconds"),
+                timings.get(doc, {}).get("document_wall_seconds"),
+                "", "", "", "", "", ""
+            ])
 
 
 def print_averages(scored, skipped):

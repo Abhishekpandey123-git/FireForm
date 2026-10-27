@@ -13,7 +13,7 @@ Every LLM setting, as read from the env file. Empty means unset.
 
 | Setting              | Default          | Meaning                                                                       |
 | -------------------- | ---------------- | ----------------------------------------------------------------------------- |
-| `LLM_PROVIDER`       | `ollama`         | Default provider. One of `ollama`, `openai`, `gemini`, `anthropic`, `custom`. |
+| `LLM_PROVIDER`       | `ollama`         | Default provider. One of `ollama`, `openai`, `gemini`, `anthropic`, `custom`, `llama_cpp`. |
 | `LLM_MODEL`          | empty            | Default model. Must be allowed by the default provider's `_MODELS`.           |
 | `LLM_ALLOW_EXTERNAL` | `false`          | Allow providers outside localhost or a private network.                       |
 | `LLM_TIMEOUT`        | `OLLAMA_TIMEOUT` | Seconds per fill.                                                             |
@@ -22,7 +22,7 @@ Every LLM setting, as read from the env file. Empty means unset.
 
 ## Per provider settings
 
-`<PREFIX>` is `OLLAMA`, `OPENAI`, `GEMINI`, `ANTHROPIC` or `CUSTOM`.
+`<PREFIX>` is `OLLAMA`, `OPENAI`, `GEMINI`, `ANTHROPIC`, `CUSTOM` or `LLAMA_CPP`.
 
 | Setting                      | Meaning                                                                                        |
 | ---------------------------- | ---------------------------------------------------------------------------------------------- |
@@ -61,6 +61,7 @@ Every LLM setting, as read from the env file. Empty means unset.
 | Gemini    | `https://generativelanguage.googleapis.com/v1beta/openai/` | on                | none       |
 | Anthropic | `https://api.anthropic.com/v1/`                            | off               | `12288`    |
 | Custom    | `CUSTOM_BASE_URL`                                          | on                | none       |
+| llama.cpp | `LLAMA_CPP_BASE_URL` or `http://localhost:8080/v1`          | on                | none       |
 
 ## Models shown in the catalog
 
@@ -94,6 +95,16 @@ provider. The existing `probe(..., verify=False)` path used by
 `POST /system/llm/test` and manual-model registration remains an intentional
 escape hatch; a model added manually is included in the catalog even if the
 provider's list filter would exclude it.
+
+## llama.cpp
+
+Use `LLM_PROVIDER=llama_cpp` to make llama.cpp the default, or choose it in the provider selector.
+Set `LLAMA_CPP_MODELS` to `*` or a comma-separated list of IDs returned by `/v1/models`.
+The base URL defaults to `http://localhost:8080/v1`; from Docker, use
+`http://host.docker.internal:8080/v1` when the server runs on the host.
+API keys are optional for local servers. Remote endpoints remain subject to external-processing consent.
+If llama.cpp is the default and `LLAMA_CPP_MODELS=*`, also set `LLM_MODEL` to an actual model ID;
+an explicit comma-separated model list can supply a default from its first entry.
 
 ## What counts as local
 

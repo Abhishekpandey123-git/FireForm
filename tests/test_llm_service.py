@@ -164,6 +164,15 @@ class TestLoadSettings:
             "gemini is off: GEMINI_API_KEY is needed. Add it, or empty GEMINI_MODELS to turn gemini off.",
         )
 
+    def test_llama_cpp_uses_local_default_without_an_api_key(self):
+        settings = load_settings(_only("llama_cpp", {"MODELS": "server-model"}, LLM_MODEL="server-model"))
+        provider = settings.providers[LLMProvider.llama_cpp]
+        assert provider.base_url == "http://localhost:8080/v1"
+        assert provider.api_key == ""
+        llm = create_llm(provider)
+        assert isinstance(llm, OpenAICompatibleLLM)
+        assert llm.provider is LLMProvider.llama_cpp
+
     def test_custom_needs_base_url(self):
         with pytest.raises(LLMConfigError, match="CUSTOM_BASE_URL is needed"):
             load_settings(_only("custom", {"MODELS": "m"}))

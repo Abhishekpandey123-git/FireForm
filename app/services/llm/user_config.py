@@ -26,6 +26,7 @@ EDITABLE_PROVIDERS = frozenset({
     LLMProvider.gemini,
     LLMProvider.anthropic,
     LLMProvider.custom,
+    LLMProvider.llama_cpp,
 })
 _cache_lock = threading.Lock()
 _credential_state_lock = threading.Lock()
@@ -149,7 +150,7 @@ def validate_provider(provider: LLMProvider) -> None:
     if provider not in EDITABLE_PROVIDERS:
         from app.services.llm.errors import LLMNotAvailableError
 
-        raise LLMNotAvailableError("Only OpenAI, Gemini, Anthropic, and custom providers can be configured here.")
+        raise LLMNotAvailableError("Only OpenAI, Gemini, Anthropic, custom, and llama.cpp providers can be configured here.")
 
 
 def registry_for_candidate(
@@ -259,11 +260,11 @@ def _build_registry(
             unavailable_credentials.add(provider.value)
         if api_key:
             provider_settings["API_KEY"] = api_key
-        if provider is LLMProvider.custom and record.base_url:
+        if provider in {LLMProvider.custom, LLMProvider.llama_cpp} and record.base_url:
             provider_settings["BASE_URL"] = record.base_url
-        if provider is LLMProvider.custom and record.structured_output is not None:
+        if provider in {LLMProvider.custom, LLMProvider.llama_cpp} and record.structured_output is not None:
             provider_settings["STRUCTURED_OUTPUT"] = str(record.structured_output).lower()
-        if not provider_settings.get("MODELS") and (api_key or (provider is LLMProvider.custom and record.base_url)):
+        if not provider_settings.get("MODELS") and (api_key or (provider in {LLMProvider.custom, LLMProvider.llama_cpp} and record.base_url)):
             provider_settings["MODELS"] = "*"
 
     if candidate:
@@ -271,9 +272,9 @@ def _build_registry(
         provider_settings = provider_env[provider.value]
         if override["api_key"] is not None:
             provider_settings["API_KEY"] = override["api_key"]
-        if provider is LLMProvider.custom and override["base_url"] is not None:
+        if provider in {LLMProvider.custom, LLMProvider.llama_cpp} and override["base_url"] is not None:
             provider_settings["BASE_URL"] = override["base_url"]
-        if provider is LLMProvider.custom and override["structured_output"] is not None:
+        if provider in {LLMProvider.custom, LLMProvider.llama_cpp} and override["structured_output"] is not None:
             provider_settings["STRUCTURED_OUTPUT"] = str(override["structured_output"]).lower()
         if not provider_settings.get("MODELS"):
             provider_settings["MODELS"] = "*"
