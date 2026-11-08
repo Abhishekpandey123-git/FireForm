@@ -66,11 +66,16 @@ def _provider_env(prefix: str, **defaults: str) -> dict[str, str]:
 # pulled model unless OLLAMA_MODELS says otherwise.
 LLM_PROVIDER_ENV = {
     "ollama": {**_provider_env("OLLAMA", MODELS="*"), "BASE_URL": OLLAMA_HOST},
+    "llama_cpp": _provider_env(
+        "LLAMA_CPP",
+        BASE_URL="http://127.0.0.1:8080/v1",
+    ),
     "openai": _provider_env("OPENAI"),
     "gemini": _provider_env("GEMINI"),
     "anthropic": _provider_env("ANTHROPIC"),
     "custom": _provider_env("CUSTOM"),
 }
+
 
 WHISPER_HOST = os.getenv("WHISPER_HOST", "http://localhost:9000").rstrip("/")
 

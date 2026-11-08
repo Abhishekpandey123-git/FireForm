@@ -97,6 +97,7 @@ LLMProvider:
   type: string
   enum:
     - ollama
+    - llama_cpp
     - openai
     - gemini
     - anthropic
